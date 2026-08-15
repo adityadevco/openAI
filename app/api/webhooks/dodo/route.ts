@@ -1,0 +1,146 @@
+import { NextResponse } from "next/server";
+import { Webhook } from "standardwebhooks";
+import { createClient } from "@supabase/supabase-js";
+
+export async function POST(request: Request) {
+  try {
+    const rawBody = await request.text();
+
+    const webhookId = request.headers.get("webhook-id");
+    const webhookSignature = request.headers.get("webhook-signature");
+    const webhookTimestamp = request.headers.get("webhook-timestamp");
+
+    const webhookSecret = process.env.DODO_WEBHOOK_SECRET;
+    const allowUnsignedLocalTest =
+      process.env.DODO_ALLOW_UNSIGNED_LOCAL_TEST === "true";
+
+    if (!webhookSecret) {
+      console.error("DODO_WEBHOOK_SECRET is missing.");
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Dodo webhook secret is not configured.",
+        },
+        { status: 500 },
+      );
+    }
+
+    let payload: any;
+
+    /*
+     * dodo wh trigger sends unsigned mock events.
+     *
+     * We allow those ONLY when explicitly enabled for
+     * local development.
+     *
+     * Real Dodo webhooks must always be signed.
+     */
+    if (
+      !webhookId ||
+      !webhookSignature ||
+      !webhookTimestamp
+    ) {
+      if (!allowUnsignedLocalTest) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Missing Dodo webhook signature headers.",
+          },
+          { status: 400 },
+        );
+      }
+
+      console.warn(
+        "⚠️ Accepting unsigned Dodo webhook because local test mode is enabled.",
+      );
+
+      payload = JSON.parse(rawBody);
+    } else {
+      const verifier = new Webhook(webhookSecret);
+
+      verifier.verify(rawBody, {
+        "webhook-id": webhookId,
+        "webhook-signature": webhookSignature,
+        "webhook-timestamp": webhookTimestamp,
+      });
+
+      payload = JSON.parse(rawBody);
+    }
+
+    console.log("Dodo webhook received:", payload);
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SECRET_KEY;
+
+    if (!supabaseUrl || !supabaseKey) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Supabase server credentials are missing.",
+        },
+        { status: 500 },
+      );
+    }
+
+    const supabase = createClient(
+      supabaseUrl,
+      supabaseKey,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      },
+    );
+
+    const eventType = payload?.type || "unknown";
+
+    /*
+     * Store the webhook event.
+     *
+     * We will connect the Dodo payment ID to the
+     * PayPilot payment ID when checkout is implemented.
+     */
+    const { error: eventError } = await supabase
+      .from("payment_events")
+      .insert({
+        event_type: `dodo.${eventType}`,
+        event_data: payload,
+      });
+
+    if (eventError) {
+      console.error(
+        "Failed to store Dodo webhook:",
+        eventError,
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: eventError.message,
+        },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      received: true,
+      eventType,
+    });
+  } catch (error) {
+    console.error("Dodo webhook error:", error);
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Webhook processing failed.",
+      },
+      { status: 400 },
+    );
+  }
+}

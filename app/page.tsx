@@ -7,11 +7,9 @@ import {
   ArrowUpRight,
   Bot,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleDollarSign,
   CreditCard,
-  Download,
   LayoutDashboard,
   Menu,
   MessageSquare,
@@ -64,6 +62,12 @@ type DashboardData = {
   };
   payments: Payment[];
   recoveryOpportunities: RecoveryOpportunity[];
+};
+
+type AgentActivity = {
+  tool: string;
+  label: string;
+  status: "completed" | "failed";
 };
 
 type View = "Overview" | "Payments" | "Recovery" | "Customers" | "Analytics" | "PayPilot AI";
@@ -127,6 +131,7 @@ export default function Home() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [agentActivity, setAgentActivity] = useState<AgentActivity[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [toast, setToast] = useState("");
   const [recoveryLoading, setRecoveryLoading] = useState<string | null>(null);
@@ -179,7 +184,8 @@ export default function Home() {
   };
 
   useEffect(() => {
-    void loadDashboard();
+    const timer = window.setTimeout(() => void loadDashboard(), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -325,7 +331,8 @@ export default function Home() {
         throw new Error(data.error || "AI request failed");
       }
 
-      setAnswer(data.answer || "Gemini returned an empty answer.");
+      setAnswer(data.answer || "The recovery agent returned an empty answer.");
+      setAgentActivity(Array.isArray(data.activity) ? data.activity : []);
     } catch (err) {
       console.error(err);
       setAnswer(
@@ -355,7 +362,7 @@ export default function Home() {
       }
 
       setRecoveryDone((current) => ({ ...current, [paymentId]: true }));
-      setToast(`Recovery workflow initiated for ${money(amount)}.`);
+      setToast(`Approval case created for ${money(amount)}. No customer was contacted.`);
       await loadDashboard(true);
     } catch (err) {
       console.error(err);
@@ -388,7 +395,7 @@ export default function Home() {
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-red-400/10">
             <AlertTriangle size={18} className="text-red-300" />
           </div>
-          <h1 className="text-lg font-semibold">PayPilot couldn't load your data</h1>
+          <h1 className="text-lg font-semibold">PayPilot couldn&apos;t load your data</h1>
           <p className="mt-2 text-sm leading-6 text-white/45">{error}</p>
           {error.toLowerCase().includes("jwt issued at future") && (
             <p className="mt-3 rounded-xl border border-amber-400/10 bg-amber-400/5 p-3 text-xs leading-5 text-amber-200/70">
@@ -619,6 +626,7 @@ export default function Home() {
                 question={question}
                 setQuestion={setQuestion}
                 answer={answer}
+                activity={agentActivity}
                 aiLoading={aiLoading}
                 askAI={askAI}
                 onPayment={setSelectedPayment}
@@ -673,9 +681,9 @@ export default function Home() {
                 question={question}
                 setQuestion={setQuestion}
                 answer={answer}
+                activity={agentActivity}
                 aiLoading={aiLoading}
                 askAI={askAI}
-                recovery={recovery}
                 onRecover={() => goTo("Recovery")}
               />
             )}
@@ -740,6 +748,7 @@ function Overview({
   question,
   setQuestion,
   answer,
+  activity,
   aiLoading,
   askAI,
   onPayment,
@@ -753,6 +762,7 @@ function Overview({
   question: string;
   setQuestion: (value: string) => void;
   answer: string;
+  activity: AgentActivity[];
   aiLoading: boolean;
   askAI: (preset?: string) => Promise<void>;
   onPayment: (payment: Payment) => void;
@@ -773,6 +783,7 @@ function Overview({
           question={question}
           setQuestion={setQuestion}
           answer={answer}
+          activity={activity}
           aiLoading={aiLoading}
           askAI={askAI}
         />
@@ -814,7 +825,7 @@ function Overview({
       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
         <Insight title="Failure pressure" description={`${metrics.failedPayments} failed payments are currently visible in the live dataset.`} icon={<ArrowDownRight size={16} />} action="Review failures" onClick={onRecovery} />
         <Insight title="Recovery value" description={`${shortMoney(metrics.revenueAtRisk)} is currently represented as revenue at risk.`} icon={<Wallet size={16} />} action="Start recovery" onClick={onRecovery} />
-        <Insight title="Payment intelligence" description="Ask Gemini to explain failure patterns, customer risk, and recovery priority." icon={<Sparkles size={16} />} action="Open AI" onClick={() => askAI("What should I recover first?")} />
+        <Insight title="Recovery agent" description="OpenAI uses payment tools to investigate failure patterns and safe next actions." icon={<Sparkles size={16} />} action="Open agent" onClick={() => askAI("What should I recover first?")} />
       </div>
     </>
   );
@@ -926,7 +937,7 @@ function RecoveryView({
                           : "bg-white text-black hover:bg-white/90"
                       } disabled:opacity-60`}
                     >
-                      {isLoading ? "Starting..." : isDone ? "Recovery initiated" : "Recover payment"}
+                      {isLoading ? "Creating..." : isDone ? "Approval case created" : "Create approval case"}
                     </button>
                   </div>
                 </div>
@@ -1096,18 +1107,18 @@ function AIView({
   question,
   setQuestion,
   answer,
+  activity,
   aiLoading,
   askAI,
   onRecover,
-  recovery,
 }: {
   question: string;
   setQuestion: (value: string) => void;
   answer: string;
+  activity: AgentActivity[];
   aiLoading: boolean;
   askAI: (preset?: string) => Promise<void>;
   onRecover: () => void;
-  recovery: RecoveryOpportunity[];
 }) {
   const prompts = [
     "Why should I recover first?",
@@ -1131,7 +1142,7 @@ function AIView({
         </div>
 
         <p className="mt-7 max-w-xl text-sm leading-7 text-white/50">
-          Ask Gemini questions against the payment dataset already loaded by PayPilot.
+          An OpenAI recovery agent investigates live payment data through scoped tools. It recommends actions, but keeps every customer-facing action approval-gated.
         </p>
 
         <div className="mt-6 flex items-center gap-2 rounded-2xl border border-white/10 bg-black/20 p-2">
@@ -1165,6 +1176,20 @@ function AIView({
               PayPilot AI
             </div>
             <div className="whitespace-pre-wrap text-sm leading-7 text-white/70">{answer}</div>
+            {activity.length > 0 && (
+              <div className="mt-5 border-t border-white/10 pt-4">
+                <div className="mb-3 text-[10px] font-medium uppercase tracking-[0.16em] text-white/30">Agent tool activity</div>
+                <div className="space-y-2">
+                  {activity.map((item, index) => (
+                    <div key={`${item.tool}-${index}`} className="flex items-center gap-2 text-xs text-white/55">
+                      <span className={`h-1.5 w-1.5 rounded-full ${item.status === "completed" ? "bg-emerald-400" : "bg-red-400"}`} />
+                      <span className="capitalize">{item.label}</span>
+                      <span className="ml-auto text-[10px] text-white/25">{item.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <button onClick={onRecover} className="mt-5 flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs font-medium text-black">
               Open recovery queue <ChevronRight size={13} />
             </button>
@@ -1179,7 +1204,8 @@ function AIView({
             ["Prioritize recovery", "Rank failed payments by value, history, and likely recovery potential."],
             ["Explain failures", "Group failure reasons and translate raw payment events into actions."],
             ["Spot anomalies", "Look for unusual customer behavior and payment patterns."],
-            ["Answer in context", "Gemini receives the live payment dataset through your server-side AI route."],
+            ["Grounded tool calls", "OpenAI selects scoped payment-data tools instead of receiving the entire customer dataset in a prompt."],
+            ["Human approval", "The agent can investigate and draft a plan; customer-facing recovery still needs approval."],
           ].map(([title, description]) => (
             <div key={title} className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4">
               <div className="text-xs font-medium">{title}</div>
@@ -1196,12 +1222,14 @@ function AIBox({
   question,
   setQuestion,
   answer,
+  activity,
   aiLoading,
   askAI,
 }: {
   question: string;
   setQuestion: (value: string) => void;
   answer: string;
+  activity: AgentActivity[];
   aiLoading: boolean;
   askAI: (preset?: string) => Promise<void>;
 }) {
@@ -1251,6 +1279,7 @@ function AIBox({
             <Bot size={13} /> PayPilot AI
           </div>
           <div className="whitespace-pre-wrap text-xs leading-6 text-white/65">{answer}</div>
+          {activity.length > 0 && <div className="mt-3 text-[10px] text-emerald-300">{activity.length} tool {activity.length === 1 ? "call" : "calls"} completed</div>}
         </div>
       )}
     </div>

@@ -26,7 +26,7 @@ export async function POST(request: Request) {
       );
     }
 
-    let payload: any;
+    let payload: Record<string, unknown>;
 
     /*
      * dodo wh trigger sends unsigned mock events.
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
         "⚠️ Accepting unsigned Dodo webhook because local test mode is enabled.",
       );
 
-      payload = JSON.parse(rawBody);
+      payload = JSON.parse(rawBody) as Record<string, unknown>;
     } else {
       const verifier = new Webhook(webhookSecret);
 
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
         "webhook-timestamp": webhookTimestamp,
       });
 
-      payload = JSON.parse(rawBody);
+      payload = JSON.parse(rawBody) as Record<string, unknown>;
     }
 
     console.log("Dodo webhook received:", payload);
@@ -94,7 +94,7 @@ export async function POST(request: Request) {
       },
     );
 
-    const eventType = payload?.type || "unknown";
+    const eventType = typeof payload.type === "string" ? payload.type : "unknown";
 
     /*
      * Store the webhook event.

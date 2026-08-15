@@ -6,6 +6,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Bot,
+  CalendarClock,
   Check,
   ChevronRight,
   CircleDollarSign,
@@ -70,12 +71,24 @@ type AgentActivity = {
   status: "completed" | "failed";
 };
 
-type View = "Overview" | "Payments" | "Recovery" | "Customers" | "Analytics" | "PayPilot AI";
+type PayoutSchedule = {
+  id: string;
+  amount: number;
+  currency: string;
+  frequency: string;
+  purpose: string | null;
+  status: "approval_pending" | "active" | "paused" | "cancelled";
+  next_run_at: string | null;
+  customer: Customer | Customer[] | null;
+};
+
+type View = "Overview" | "Payments" | "Recovery" | "Payouts" | "Customers" | "Analytics" | "PayPilot AI";
 
 const navItems: Array<{ label: View; icon: typeof LayoutDashboard }> = [
   { label: "Overview", icon: LayoutDashboard },
   { label: "Payments", icon: CreditCard },
   { label: "Recovery", icon: RefreshCw },
+  { label: "Payouts", icon: CalendarClock },
   { label: "Customers", icon: Users },
   { label: "Analytics", icon: Activity },
 ];
@@ -136,6 +149,9 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [recoveryLoading, setRecoveryLoading] = useState<string | null>(null);
   const [recoveryDone, setRecoveryDone] = useState<Record<string, boolean>>({});
+  const [payoutSchedules, setPayoutSchedules] = useState<PayoutSchedule[]>([]);
+  const [payoutsLoading, setPayoutsLoading] = useState(false);
+  const [approvingScheduleId, setApprovingScheduleId] = useState<string | null>(null);
 
   const loadDashboard = async (isRefresh = false) => {
     try {
@@ -308,6 +324,37 @@ export default function Home() {
     setMobileOpen(false);
     setSearchOpen(false);
     setSearch("");
+    if (nextView === "Payouts") void loadPayoutSchedules();
+  };
+
+  const loadPayoutSchedules = async () => {
+    setPayoutsLoading(true);
+    try {
+      const response = await fetch("/api/payout-schedules", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || "Unable to load payout schedules.");
+      setPayoutSchedules(data.schedules ?? []);
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Unable to load payout schedules.");
+    } finally {
+      setPayoutsLoading(false);
+    }
+  };
+
+  const approvePayoutSchedule = async (schedule: PayoutSchedule) => {
+    if (approvingScheduleId || schedule.status !== "approval_pending") return;
+    setApprovingScheduleId(schedule.id);
+    try {
+      const response = await fetch(`/api/payout-schedules/${schedule.id}/approve`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || "Unable to approve payout schedule.");
+      setPayoutSchedules((current) => current.map((item) => item.id === schedule.id ? { ...item, status: "active" } : item));
+      setToast(`Payout schedule approved for ${money(schedule.amount, schedule.currency)} every Friday.`);
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Unable to approve payout schedule.");
+    } finally {
+      setApprovingScheduleId(null);
+    }
   };
 
   const askAI = async (preset?: string) => {
@@ -598,6 +645,8 @@ export default function Home() {
                       ? "Search, filter, and inspect every payment returned by your live database."
                       : view === "Recovery"
                         ? "Prioritize failed payments and start auditable recovery workflows."
+                        : view === "Payouts"
+                          ? "Review agent-created payout schedules before they become active."
                         : view === "Customers"
                           ? "Understand customer payment behavior from the transactions already in PayPilot."
                           : view === "Analytics"
@@ -653,6 +702,16 @@ export default function Home() {
                   const payment = payments.find((item) => item.id === id);
                   if (payment) setSelectedPayment(payment);
                 }}
+              />
+            )}
+
+            {view === "Payouts" && (
+              <PayoutSchedulesView
+                schedules={payoutSchedules}
+                loading={payoutsLoading}
+                approvingId={approvingScheduleId}
+                onApprove={approvePayoutSchedule}
+                onRefresh={loadPayoutSchedules}
               />
             )}
 
@@ -949,6 +1008,76 @@ function RecoveryView({
         {!opportunities.length && <EmptyState text="Excellent. There are no failed payment opportunities right now." />}
       </section>
     </>
+  );
+}
+
+function PayoutSchedulesView({
+  schedules,
+  loading,
+  approvingId,
+  onApprove,
+  onRefresh,
+}: {
+  schedules: PayoutSchedule[];
+  loading: boolean;
+  approvingId: string | null;
+  onApprove: (schedule: PayoutSchedule) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const customerFor = (schedule: PayoutSchedule) =>
+    Array.isArray(schedule.customer) ? schedule.customer[0] ?? null : schedule.customer;
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-[#0d0f14] p-5">
+      <div className="flex flex-col gap-4 border-b border-white/10 pb-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-medium">Payout schedules</div>
+          <div className="mt-1 text-xs text-white/30">Agent-created schedules require approval before any Friday run is eligible.</div>
+        </div>
+        <button onClick={() => void onRefresh()} disabled={loading} className="flex w-fit items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/55 hover:bg-white/5 disabled:opacity-50">
+          <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> Refresh
+        </button>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {schedules.map((schedule) => {
+          const customer = customerFor(schedule);
+          const isPending = schedule.status === "approval_pending";
+          const isApproving = approvingId === schedule.id;
+          return (
+            <div key={schedule.id} className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-white/60"><CalendarClock size={17} /></div>
+                  <div>
+                    <div className="text-sm font-medium">{customerLabel(customer)}</div>
+                    <div className="mt-1 text-xs text-white/35">{schedule.purpose || "Recurring payout"} · Every Friday</div>
+                    <div className="mt-1 text-[10px] text-white/25">First eligible run: {schedule.next_run_at ? formatDate(schedule.next_run_at) : "Not scheduled"}</div>
+                    <div className="mt-1 font-mono text-[10px] text-white/20">{schedule.id}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 md:justify-end">
+                  <div className="text-right">
+                    <div className="text-sm font-semibold">{money(schedule.amount, schedule.currency)}</div>
+                    <div className={`mt-1 text-[10px] uppercase tracking-wide ${isPending ? "text-amber-300" : "text-emerald-300"}`}>{isPending ? "Approval pending" : schedule.status}</div>
+                  </div>
+                  {isPending ? (
+                    <button onClick={() => onApprove(schedule)} disabled={isApproving} className="rounded-xl bg-white px-4 py-2.5 text-xs font-medium text-black hover:bg-white/90 disabled:opacity-50">
+                      {isApproving ? "Approving..." : "Approve schedule"}
+                    </button>
+                  ) : (
+                    <span className="rounded-xl bg-emerald-400/10 px-4 py-2.5 text-xs font-medium text-emerald-300">Active</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {!loading && !schedules.length && <EmptyState text="No payout schedules yet. Ask PayPilot AI to create a Friday payout schedule draft." />}
+        {loading && <EmptyState text="Loading payout schedules..." />}
+      </div>
+    </section>
   );
 }
 
@@ -1488,7 +1617,7 @@ function SearchModal({
             <div className="p-3">
               <div className="text-[10px] uppercase tracking-wider text-white/25">Quick navigation</div>
               <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {(["Overview", "Payments", "Recovery", "Customers", "Analytics", "PayPilot AI"] as View[]).map((item) => (
+                {(["Overview", "Payments", "Recovery", "Payouts", "Customers", "Analytics", "PayPilot AI"] as View[]).map((item) => (
                   <button key={item} onClick={() => onView(item)} className="rounded-xl border border-white/10 p-3 text-left text-xs text-white/50 hover:bg-white/5 hover:text-white">{item}</button>
                 ))}
               </div>

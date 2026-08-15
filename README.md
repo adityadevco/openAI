@@ -45,6 +45,7 @@ The UI exposes the agent’s completed tool calls so an operator can see how the
 - Approval-pending recovery cases with a recovery score and draft message
 - Agent-created payment-request drafts
 - Approval-gated weekly payout schedule drafts, with a first-run timestamp
+- Payouts dashboard section with a one-click **Approve schedule** control
 - Protected scheduler endpoint that records due payout runs as provider-ready instructions
 - Payment-event audit trail
 - Searchable payment and customer views
@@ -118,7 +119,14 @@ Open [http://localhost:3000](http://localhost:3000).
 5. Open **Recovery** and select **Create approval case**.
 6. Show that the case is marked `approval_pending`: no retry or customer contact occurs automatically.
 7. Ask: `Pay ₹100 to Arjun Mehta every Friday for contractor reimbursement.`
-8. Verify that PayPilot creates an `approval_pending` payout schedule with a schedule ID and next-Friday run time—without moving money.
+8. Open **Payouts** in the sidebar. Verify the agent-created schedule shows the customer, ₹100 amount, first Friday run time, and `approval_pending` status.
+9. Select **Approve schedule**. The status becomes `active`; no money is moved.
+
+### Approving a payout schedule
+
+The **Payouts** dashboard section loads `GET /api/payout-schedules` and lets an operator approve a single pending draft through `POST /api/payout-schedules/:id/approve`.
+
+The interface is intentionally explicit: approval only activates the schedule. A future provider integration is still required to transfer payout funds.
 
 ## Deployment
 
@@ -168,7 +176,7 @@ PayPilot is a recovery-assistance prototype, not a payment processor.
 - Recovery cases begin in `approval_pending`.
 - Payment requests and recurring payout schedules begin in `approval_pending`.
 - The current application does not automatically message customers, retry payments, issue refunds, or move payout funds.
-- Production use requires authentication, tenant isolation, rate limiting, and proper role-based approval controls.
+- The current approval endpoint is suitable only for the hackathon demo. Production use requires authentication, tenant isolation, rate limiting, and role-based approval controls.
 
 ## Hackathon pitch
 

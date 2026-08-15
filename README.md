@@ -27,6 +27,9 @@ The Recovery Agent uses the OpenAI Responses API with strict function tools. It 
 | `get_recovery_queue` | Reads the highest-priority failed payments. |
 | `get_customer_payment_history` | Grounds recommendations in a customer’s prior payment activity. |
 | `get_recovery_policy` | Maps the failure reason to a safe, deterministic recovery policy. |
+| `find_customer` | Resolves a customer before creating a financial workflow draft. |
+| `create_payment_request_draft` | Creates an approval-pending request for a customer to pay the business. |
+| `create_weekly_payout_schedule_draft` | Creates an approval-pending Friday payout schedule; it never moves money. |
 
 The agent can investigate and recommend. It cannot send outreach, retry a charge, issue a refund, or claim that a payment was recovered. Those actions stay approval-gated by design.
 
@@ -40,6 +43,9 @@ The UI exposes the agent’s completed tool calls so an operator can see how the
 - Customer-history-aware recovery recommendations
 - Deterministic strategies for declined cards, authentication requirements, expired cards, and insufficient funds
 - Approval-pending recovery cases with a recovery score and draft message
+- Agent-created payment-request drafts
+- Approval-gated weekly payout schedule drafts, with a first-run timestamp
+- Protected scheduler endpoint that records due payout runs as provider-ready instructions
 - Payment-event audit trail
 - Searchable payment and customer views
 
@@ -75,6 +81,7 @@ Optional variables:
 ```bash
 DODO_PAYMENTS_API_KEY=
 DODO_ALLOW_UNSIGNED_LOCAL_TEST=false
+SCHEDULE_SECRET=
 ```
 
 Never commit `.env.local` or any service-role/API key.
@@ -86,7 +93,13 @@ In the Supabase SQL Editor, run these in order:
 1. `supabase/schema.sql`
 2. `supabase/seed.sql` (demo data only)
 
-`schema.sql` includes the `recovery_cases` and `agent_runs` tables required by the new workflow.
+`schema.sql` includes every required table: `recovery_cases`, `agent_runs`, `payment_requests`, `payout_schedules`, and `payout_runs`.
+
+If an API reports that a table is missing from the Supabase schema cache after you run the migration, execute:
+
+```sql
+notify pgrst, 'reload schema';
+```
 
 ### 4. Start the app
 
@@ -104,6 +117,8 @@ Open [http://localhost:3000](http://localhost:3000).
 4. Review its evidence-based recommendation and the tool activity timeline.
 5. Open **Recovery** and select **Create approval case**.
 6. Show that the case is marked `approval_pending`: no retry or customer contact occurs automatically.
+7. Ask: `Pay ₹100 to Arjun Mehta every Friday for contractor reimbursement.`
+8. Verify that PayPilot creates an `approval_pending` payout schedule with a schedule ID and next-Friday run time—without moving money.
 
 ## Deployment
 
@@ -116,6 +131,7 @@ SUPABASE_SECRET_KEY
 DODO_WEBHOOK_SECRET
 DODO_PAYMENTS_API_KEY              # optional, when the Dodo API is used
 DODO_ALLOW_UNSIGNED_LOCAL_TEST=false
+SCHEDULE_SECRET                     # required by the scheduled payout-run endpoint
 ```
 
 Run the Supabase schema migration before enabling recovery actions. For production, keep unsigned webhook test mode disabled and configure Dodo to send signed events to:
@@ -123,6 +139,17 @@ Run the Supabase schema migration before enabling recovery actions. For producti
 ```text
 https://YOUR_DOMAIN/api/webhooks/dodo
 ```
+
+### Scheduled payout runs
+
+After a payout schedule is approved, invoke the protected endpoint from a trusted scheduler every Friday:
+
+```text
+POST https://YOUR_DOMAIN/api/payout-schedules/run-due
+x-schedule-secret: YOUR_SCHEDULE_SECRET
+```
+
+The endpoint creates `awaiting_provider` payout-run records. The installed Dodo SDK currently exposes payout status but does not create payouts, so this project deliberately does not move money until a payout-creation provider is connected. Signed `payout.success` and `payout.failed` webhooks update matching provider-linked runs.
 
 ## Validation
 
@@ -139,7 +166,8 @@ PayPilot is a recovery-assistance prototype, not a payment processor.
 
 - Recommendations are based only on tool-returned payment data.
 - Recovery cases begin in `approval_pending`.
-- The current application does not automatically message customers, retry payments, or issue refunds.
+- Payment requests and recurring payout schedules begin in `approval_pending`.
+- The current application does not automatically message customers, retry payments, issue refunds, or move payout funds.
 - Production use requires authentication, tenant isolation, rate limiting, and proper role-based approval controls.
 
 ## Hackathon pitch

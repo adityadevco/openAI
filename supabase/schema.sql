@@ -117,6 +117,61 @@ create table if not exists agent_runs (
 );
 
 -- ============================================
+-- AGENT-CREATED PAYMENT REQUESTS
+-- A request is not a charge. Checkout creation remains a separate approved action.
+-- ============================================
+
+create table if not exists payment_requests (
+    id uuid primary key default gen_random_uuid(),
+    customer_id uuid not null references customers(id) on delete restrict,
+    amount numeric(12,2) not null check (amount > 0),
+    currency text not null default 'INR',
+    purpose text,
+    status text not null default 'approval_pending'
+        check (status in ('approval_pending', 'approved', 'checkout_created', 'paid', 'cancelled')),
+    provider_checkout_id text,
+    checkout_url text,
+    created_at timestamptz default now(),
+    approved_at timestamptz,
+    checkout_created_at timestamptz
+);
+
+-- ============================================
+-- APPROVAL-GATED PAYOUT SCHEDULES
+-- Dodo's current SDK exposes payout status, not payout creation. A due run therefore
+-- becomes a provider-ready instruction until a connected payout provider accepts it.
+-- ============================================
+
+create table if not exists payout_schedules (
+    id uuid primary key default gen_random_uuid(),
+    customer_id uuid not null references customers(id) on delete restrict,
+    amount numeric(12,2) not null check (amount > 0),
+    currency text not null default 'INR',
+    frequency text not null check (frequency in ('weekly')),
+    day_of_week integer not null check (day_of_week between 0 and 6),
+    purpose text,
+    status text not null default 'approval_pending'
+        check (status in ('approval_pending', 'active', 'paused', 'cancelled')),
+    next_run_at timestamptz,
+    created_at timestamptz default now(),
+    approved_at timestamptz
+);
+
+create table if not exists payout_runs (
+    id uuid primary key default gen_random_uuid(),
+    payout_schedule_id uuid not null references payout_schedules(id) on delete cascade,
+    scheduled_for timestamptz not null,
+    amount numeric(12,2) not null,
+    currency text not null,
+    status text not null default 'awaiting_provider'
+        check (status in ('awaiting_provider', 'processing', 'success', 'failed')),
+    provider_payout_id text unique,
+    failure_reason text,
+    created_at timestamptz default now(),
+    completed_at timestamptz
+);
+
+-- ============================================
 -- INDEXES
 -- ============================================
 
@@ -140,3 +195,12 @@ on payment_events(created_at);
 
 create index if not exists recovery_cases_payment_idx
 on recovery_cases(payment_id);
+
+create index if not exists payment_requests_customer_idx
+on payment_requests(customer_id);
+
+create index if not exists payout_schedules_customer_idx
+on payout_schedules(customer_id);
+
+create index if not exists payout_runs_schedule_idx
+on payout_runs(payout_schedule_id);

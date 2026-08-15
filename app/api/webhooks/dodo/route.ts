@@ -124,6 +124,26 @@ export async function POST(request: Request) {
       );
     }
 
+    // When a future payout-provider integration stores Dodo's payout ID on a run,
+    // signed payout webhooks close the loop without trusting browser input.
+    if (eventType.startsWith("payout.")) {
+      const eventData = payload.data;
+      if (eventData && typeof eventData === "object" && "payout_id" in eventData && typeof eventData.payout_id === "string") {
+        const status = eventType === "payout.success"
+          ? "success"
+          : eventType === "payout.failed"
+            ? "failed"
+            : "processing";
+        const update: { status: string; completed_at?: string } = { status };
+        if (status === "success" || status === "failed") update.completed_at = new Date().toISOString();
+        const { error: payoutRunError } = await supabase
+          .from("payout_runs")
+          .update(update)
+          .eq("provider_payout_id", eventData.payout_id);
+        if (payoutRunError) console.error("Failed to update payout run:", payoutRunError);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       received: true,
